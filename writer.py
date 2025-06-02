@@ -14,7 +14,7 @@ class PDF(FPDF):
         pass
 
 def fetch_assignment_json(assignment_topic: str):
-    GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY", "YOUR_API_CODE")
     URL = "https://api.groq.com/openai/v1/chat/completions"
     HEADERS = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
