@@ -1,81 +1,102 @@
-from fpdf import FPDF
+import os
+import requests
+import json
 import re
+from fpdf import FPDF
 
 class PDF(FPDF):
     def header(self):
-        # Add a grey vertical margin line on every page with color (111, 111, 111) and width 0.3
-        self.set_draw_color(111, 111, 111)  # Light grey color for the margin line
-        self.set_line_width(0.3)  # Set the line width to 0.3
-        self.line(15, 0, 15, self.h)  # Draw line from top to bottom of the page
+        self.set_draw_color(111, 111, 111)
+        self.set_line_width(0.3)
+        self.line(15, 0, 15, self.h)
 
     def footer(self):
-        pass  # No footer
+        pass
 
-# Create PDF object
-pdf = PDF()
-pdf.set_auto_page_break(auto=False, margin=15)
+def fetch_assignment_json(assignment_topic: str):
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY", "YOUR_API_CODE")
+    URL = "https://api.groq.com/openai/v1/chat/completions"
+    HEADERS = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
 
-# Set a custom page break trigger
-pdf.page_break_trigger = 250  # Custom page break trigger at 250mm
+    prompt = (
+        f"Give content for my assignment topic “{assignment_topic}”—each answer should be have more than 40 words."
+        f"Return the output in this exact JSON format:\n\n"
+        "{\n"
+        '  "question_no": number,\n'
+        '  "question": "actual question",\n'
+        '  "answer_heading": "heading_name",\n'
+        '  "answer": "actual answer"\n'
+        "}\n\n"
+        "Do not include any extra text—emit a JSON array of such objects."
+    )
 
-pdf.add_page()
+    payload = {
+        "model": "llama3-70b-8192",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 1,
+        "max_tokens": 1024,
+        "top_p": 1,
+        "stream": False
+    }
 
-# Register the Indie Flower handwriting font
-pdf.add_font('Handwriting', '', 'LiuJianMaoCao-Regular.ttf', uni=True)
+    response = requests.post(URL, headers=HEADERS, json=payload)
+    response.raise_for_status()
 
-# Set handwriting font
-pdf.set_font('Handwriting', size=12)
+    content = response.json()["choices"][0]["message"]["content"]
 
-# Apply left margin
-pdf.set_left_margin(20)  # Increase the left margin
-pdf.set_x(20)  # Ensure writing starts after the margin
+    # Sometimes the API might return extra text, so extract JSON array only
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        start = content.find("[")
+        end = content.rfind("]") + 1
+        data = json.loads(content[start:end])
 
-# Long text to simulate multiple pages
-large_text = """Data scientists play a crucial role in addressing the challenges of big data by applying their skills in statistics, 
-machine learning, data analysis, and domain knowledge to extract insights and make informed decisions. 
-Here's how they contribute to solving big data challenges:
+    return data
 
-1. Data Cleaning and Preprocessing:
-Challenge: Big data often contains noisy, incomplete, or inconsistent information.
-Contribution: Data scientists clean, transform, and preprocess data to ensure it is structured and usable for analysis.
+def write_qa(pdf, data):
+    pdf.set_auto_page_break(auto=False, margin=15)
+    pdf.page_break_trigger = 250
+    pdf.add_page()
 
-2. Data Integration:
-Challenge: Big data often comes from multiple sources, making integration difficult.
-Contribution: Data scientists combine data from various sources and formats into a unified dataset.
+    pdf.add_font('Handwriting', '', 'LiuJianMaoCao-Regular.ttf', uni=True)
+    pdf.set_left_margin(20)
+    pdf.set_x(20)
 
-3. Data Analysis:
-Challenge: Extracting meaningful insights from massive datasets is complex.
-Contribution: Using advanced statistical techniques and machine learning algorithms, data scientists analyze data patterns and relationships.
-""" * 2  # Repeat for testing multiple pages
+    for item in data:
+        if pdf.get_y() + 30 > pdf.page_break_trigger:
+            pdf.add_page()
 
-# Function to print heading and body text with color coding and page break handling
-def write_colored_text(pdf, text):
-    # Split the text into lines and process each line
-    lines = text.split('\n')
-    
-    for line in lines:
-        # Check if the line is a heading or subheading (using simple regex)
-        if re.match(r'^\d+\.|^[A-Z\s]+$', line):  # Match numbers or fully capitalized lines
-            # Check if the line fits on the current page
-            if pdf.get_y() + 12 > pdf.page_break_trigger:  # Check if remaining space is less than 12 mm
-                pdf.add_page()  # Add a new page if there isn't enough space
-            
-            pdf.set_text_color(0, 0, 0)  # Set color to black for heading
-        else:
-            pdf.set_text_color(0, 15, 185)  # Set color to blue for regular text
-        
-        pdf.multi_cell(0, 10, line)
+        # Question and question number in black
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font('Handwriting', '', 12)
+        pdf.multi_cell(0, 10, f"Q{item['question_no']}. {item['question']}")
 
-# Write the heading and body with different colors
-write_colored_text(pdf, large_text)
+        # Answer heading in black
+        pdf.set_font('Handwriting', '', 12)
+        pdf.multi_cell(0, 10, item['answer_heading'])
 
-# Check if the last page is empty
-if pdf.page_no() > 1 and pdf.get_y() < pdf.page_break_trigger:
-    # If the last page is nearly empty, we won't add a final page or we skip the content for the last one.
-    print(f"Removing last page, no content after line {pdf.get_y()}")
+        if pdf.get_y() + 10 > pdf.page_break_trigger:
+            pdf.add_page()
 
-# Save PDF
-pdf_file_name = "assignment.pdf"
-pdf.output(pdf_file_name)
+        # Answer text in blue
+        pdf.set_font('Handwriting', '', 12)
+        pdf.set_text_color(0, 15, 185)  # Blue
+        pdf.multi_cell(0, 10, item['answer'])
 
-print(f"PDF with custom page break trigger and empty page removal has been created successfully as '{pdf_file_name}'.")
+        pdf.ln(5)
+
+if __name__ == "__main__":
+    topic = input("Enter assignment topic: ").strip()
+    try:
+        qa_data = fetch_assignment_json(topic)
+        pdf = PDF()
+        write_qa(pdf, qa_data)
+        pdf.output("assignment.pdf")
+        print("✅ PDF created: 'assignment.pdf'")
+    except Exception as e:
+        print("Error:", e)
+
